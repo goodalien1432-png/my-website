@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>เครื่องมือดูกล่อง 3D / AR – BETAGRO</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  :root { color-scheme: dark; box-sizing: border-box; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+    --bg:#0f172a; --panel:rgba(15,23,42,.88); --line:rgba(255,255,255,.14); --text:#f1f5f9; --muted:#94a3b8; --accent:#10b981; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: var(--bg); color: var(--text);
+    font-family: 'Noto Sans Thai', 'Sarabun', 'Segoe UI', Tahoma, sans-serif; }
+  #stage { position: fixed; inset: 0; touch-action: none; }
+  .panel { background: var(--panel); backdrop-filter: blur(12px); border: 1px solid var(--line); }
+  .btn { background:#1e293b; border:1px solid #334155; border-radius:.6rem; padding:.45rem .7rem; font-size:.8rem; transition:.15s; color:var(--text); }
+  .btn:hover { background:#334155; }
+  .btn.on { background:rgba(16,185,129,.2); border-color:#10b981; color:#6ee7b7; }
+  .btn-main { background:#059669; border-color:#059669; font-weight:600; }
+  .btn-main:hover { background:#10b981; }
+  .field { width:100%; background:#0b1220; border:1px solid #334155; border-radius:.5rem; padding:.4rem .6rem; font-size:.8rem; color:var(--text); }
+  .field:focus, .btn:focus-visible, summary:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  input[type=range] { -webkit-appearance:none; appearance:none; background:transparent; width:100%; height:24px; }
+  input[type=range]::-webkit-slider-runnable-track { height:6px; background:#334155; border-radius:3px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; height:20px; width:20px; margin-top:-7px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px rgba(16,185,129,.6); }
+  input[type=range]::-moz-range-track { height:6px; background:#334155; border-radius:3px; }
+  input[type=range]::-moz-range-thumb { height:20px; width:20px; border:0; border-radius:50%; background:var(--accent); }
+  details > summary { cursor:pointer; list-style:none; }
+  details > summary::-webkit-details-marker { display:none; }
+  #toast { transition:opacity .3s; }
+  .hd { position:absolute; width:24px; height:24px; margin:-12px 0 0 -12px; border-radius:50%; border:2px solid #fff; touch-action:none; cursor:grab; z-index:5; }
+  .hd.k-l { background:#22d3ee; border-radius:6px; } .hd.k-t { background:#a3e635; } .hd.k-b { background:#fb923c; } .hd.k-g { background:#e879f9; }
+  #bottom { max-height: 62vh; overflow-y: auto; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<video id="ar-video" autoplay playsinline muted class="fixed inset-0 w-full h-full object-cover hidden" style="z-index:-1"></video>
+
+<!-- แถบด้านบน -->
+<header class="fixed left-3 right-3 flex flex-wrap items-center justify-between gap-2 z-10 pointer-events-none" style="top:calc(env(safe-area-inset-top,0px) + .75rem)">
+  <div class="panel rounded-xl px-3 py-2 pointer-events-auto">
+    <h1 class="text-sm font-bold">ดูกล่อง 3D ก่อนสั่งผลิต</h1>
+    <p id="subtitle" class="text-[11px]" style="color:var(--muted)">กล่อง RSC • BUFFALO MIDDLE WING</p>
+  </div>
+  <div class="flex flex-wrap gap-2 pointer-events-auto">
+    <label class="btn cursor-pointer">🖼️ อัปโหลดภาพ Dieline<input id="upload" type="file" accept="image/*" class="hidden" /></label>
+    <button id="btn-png" class="btn">📷 บันทึกภาพ</button>
+    <button id="btn-bc" class="btn">🔍 ตรวจบาร์โค้ด</button>
+    <button id="btn-glb" class="btn btn-main">⬇️ ไฟล์ AR (.glb)</button>
+    <button id="btn-ar" class="btn">📱 เปิดกล้องทับภาพ</button>
+  </div>
+</header>
+
+<div id="editor" class="fixed inset-0 z-40 hidden flex-col" style="background:#020617;padding-top:env(safe-area-inset-top,0px)">
+  <div class="flex flex-wrap items-center justify-between gap-2 p-3">
+    <p class="text-xs max-w-xl" style="color:var(--muted)">ลากจุดให้ตรงรอยพับของภาพ: <b style="color:#22d3ee">ฟ้า</b> = เส้นพับ/ขอบแผง (ซ้าย→ขวา: ลิ้นกาว, หน้า, ข้าง, หลัง, ข้าง; สองเส้นแนวนอน = ขอบบน/ล่างของตัวกล่อง) • <b style="color:#a3e635">เขียว</b> = มุมปลายฝาบน • <b style="color:#fb923c">ส้ม</b> = มุมปลายก้น • <b style="color:#e879f9">ชมพู</b> = ปลายลิ้นกาว</p>
+    <div class="flex gap-2"><button id="ed-reset" class="btn">รีเซ็ต</button><button id="ed-close" class="btn">ปิด</button><button id="ed-apply" class="btn btn-main">ใช้ค่านี้</button></div>
+  </div>
+  <div class="flex-1 flex items-center justify-center overflow-hidden px-2 pb-3">
+    <div id="ed-wrap" class="relative" style="touch-action:none"><img id="ed-img" alt="Dieline" draggable="false" style="background:#fff;display:block;max-width:96vw;max-height:calc(100vh - 160px)" /><svg id="ed-svg" viewBox="0 0 1 1" preserveAspectRatio="none" class="absolute inset-0 w-full h-full pointer-events-none"></svg></div>
+  </div>
+</div>
+<div id="fe" class="fixed inset-0 z-40 hidden flex-col" style="background:#020617;padding-top:env(safe-area-inset-top,0px)">
+  <div class="flex flex-wrap items-center gap-1.5 p-2">
+    <button class="btn on" data-tool="rect">▭ สี่เหลี่ยม</button>
+    <button class="btn" data-tool="poly">⬠ หลายเหลี่ยม</button>
+    <button class="btn" data-tool="move">✋ เลือก/ย้ายจุด</button>
+    <button id="fe-poly-done" class="btn btn-main hidden">✔ ปิดรูป</button>
+    <button id="fe-root" class="btn">★ ตั้งเป็นแผงฐาน</button>
+    <button id="fe-del" class="btn">🗑 ลบแผง</button>
+    <button id="fe-undo" class="btn">↶ ย้อน</button>
+    <label class="text-xs flex items-center gap-1" style="color:var(--muted)">กว้างจริงของแผงฐาน (มม.)<input id="fe-mm" type="number" min="1" class="field" style="width:4.5rem" /></label>
+    <span class="flex-1"></span>
+    <button id="fe-clear" class="btn">ล้างทั้งหมด</button>
+    <button id="fe-x" class="btn">ปิด</button>
+    <button id="fe-apply" class="btn btn-main">ใช้ค่านี้</button>
+  </div>
+  <p id="fe-help" class="px-3 pb-1 text-[11px]" style="color:var(--muted)"></p>
+  <div class="flex-1 min-h-0 flex items-center justify-center overflow-hidden px-2">
+    <div id="fe-wrap" class="relative" style="touch-action:none"><img id="fe-img" alt="Dieline" draggable="false" style="background:#fff;display:block;max-width:96vw;max-height:calc(100vh - 290px)" /><svg id="fe-svg" class="absolute inset-0 w-full h-full pointer-events-none"></svg></div>
+  </div>
+  <div id="fe-list" class="p-2 overflow-y-auto text-xs space-y-1" style="max-height:26vh"></div>
+</div>
+<div id="empty" class="fixed inset-0 flex items-center justify-center text-center px-8 pointer-events-none"><p class="panel rounded-xl px-4 py-3 text-sm">ยังไม่มีกล่อง — กรอกขนาด ยาว × กว้าง × สูง ที่แผงด้านล่างเพื่อสร้างกล่องตามขนาดจริง</p></div>
+<div id="bc" class="fixed hidden panel rounded-2xl p-3 z-30 text-xs" style="left:.75rem;top:calc(env(safe-area-inset-top,0px) + 4.5rem);width:min(94vw,26rem);max-height:55vh;overflow-y:auto">
+  <div class="flex items-center justify-between mb-2"><b class="text-sm">ผลตรวจบาร์โค้ด</b><button id="bc-x" class="btn" aria-label="ปิด">✕</button></div>
+  <div id="bc-body" class="space-y-2"></div>
+  <div class="grid grid-cols-2 gap-1.5 mt-2"><button id="bc-rescan" class="btn">↻ ตรวจใหม่ (ภาพ Dieline)</button><button id="bc-view" class="btn">📷 ตรวจจากมุมมอง 3D</button></div>
+</div>
+<div id="ex" class="fixed inset-0 z-50 hidden items-end md:items-center justify-center p-3" style="background:rgba(2,6,23,.72)">
+  <div class="panel rounded-2xl p-4 w-full max-w-lg space-y-3 overflow-y-auto" style="max-height:92vh">
+    <div class="flex items-center justify-between"><b class="text-sm">บันทึกภาพ</b><button id="ex-x" class="btn" aria-label="ปิด">✕</button></div>
+    <div class="rounded-lg overflow-hidden flex items-center justify-center" style="height:150px;background:repeating-conic-gradient(#334155 0% 25%,#1e293b 0% 50%) 50% / 16px 16px"><img id="ex-prev" alt="ตัวอย่างภาพ" style="max-width:100%;max-height:100%" /></div>
+    <p id="ex-info" class="text-[11px] text-center" style="color:var(--muted)"></p>
+    <div><p class="text-xs mb-1" style="color:var(--muted)">รูปแบบไฟล์</p><div class="grid grid-cols-4 gap-1.5" data-g="fmt"><button class="btn" data-v="png">PNG</button><button class="btn" data-v="jpg">JPG</button><button class="btn" data-v="webp">WEBP</button><button class="btn" data-v="pdf">PDF</button></div></div>
+    <div><p class="text-xs mb-1" style="color:var(--muted)">ส่วนที่บันทึก</p><div class="grid grid-cols-2 gap-1.5" data-g="scope"><button class="btn" data-v="scene">ทั้งฉาก (มีพื้น/กริด)</button><button class="btn" data-v="box">เฉพาะตัวกล่อง</button></div></div>
+    <div id="ex-boxopts" class="hidden flex-wrap gap-x-4 gap-y-1 text-xs">
+      <label class="flex items-center gap-1.5"><input type="checkbox" id="ex-trim" checked /> ตัดขอบให้พอดีตัวกล่อง</label>
+      <label class="flex items-center gap-1.5"><input type="checkbox" id="ex-shadow" checked /> เก็บเงาใต้กล่อง</label>
+    </div>
+    <div><p class="text-xs mb-1" style="color:var(--muted)">พื้นหลัง</p>
+      <div class="grid grid-cols-3 gap-1.5" data-g="bg"><button class="btn" data-v="studio">ฉากสตูดิโอ</button><button class="btn" data-v="color">สีพื้น</button><button class="btn" data-v="none" id="ex-none">โปร่งใส</button></div>
+      <div id="ex-coloropt" class="hidden items-center gap-2 mt-1.5 text-xs"><input type="color" id="ex-color" value="#ffffff" aria-label="เลือกสีพื้นหลัง" style="width:2.5rem;height:1.8rem;background:none;border:0" /> เลือกสีพื้นหลัง</div></div>
+    <div><p class="text-xs mb-1" style="color:var(--muted)">ความละเอียด</p><div class="grid grid-cols-3 gap-1.5" data-g="scale"><button class="btn" data-v="1">1× (เร็ว)</button><button class="btn" data-v="2">2× (คมชัด)</button><button class="btn" data-v="3">3× (สูงสุด)</button></div></div>
+    <div id="ex-pdfopts" class="hidden"><div><p class="text-xs mb-1" style="color:var(--muted)">ขนาดหน้า PDF</p><div class="grid grid-cols-2 gap-1.5" data-g="page"><button class="btn" data-v="fit">พอดีกับภาพ</button><button class="btn" data-v="a4">A4 (วางกึ่งกลาง)</button></div></div></div>
+    <p id="ex-note" class="text-[11px]" style="color:#fbbf24"></p>
+    <div class="grid grid-cols-2 gap-2"><button id="ex-cancel" class="btn">ยกเลิก</button><button id="ex-save" class="btn btn-main">⬇️ บันทึก</button></div>
+  </div>
+</div>
+<div id="toast" class="fixed left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-xs opacity-0 pointer-events-none z-50 panel text-center" style="top:calc(env(safe-area-inset-top,0px) + 5.5rem);max-width:92vw;color:#6ee7b7"></div>
+
+<!-- แผงควบคุม -->
+<section id="bottom" class="panel fixed left-3 right-3 md:left-auto md:w-96 rounded-2xl p-4 z-10 space-y-3" style="bottom:calc(env(safe-area-inset-bottom,0px) + .75rem)">
+  <details id="size-box" open>
+    <summary class="text-sm font-semibold flex justify-between">ขนาดกล่อง (มม.) ยาว × กว้าง × สูง <span style="color:var(--muted)">▾</span></summary>
+    <div class="mt-2 space-y-2">
+      <button id="btn-free" class="btn w-full">🧩 ตั้งแบบอิสระ: วาดแผง + รอยพับเอง (ใช้ได้กับ die-cut ทุกแบบ)</button>
+      <button id="btn-map" class="btn w-full">📐 ตั้งจุดพับตามภาพ Dieline (ต้องอัปโหลดภาพก่อน)</button>
+      <div class="grid grid-cols-2 gap-1.5" role="group" aria-label="ประเภทกล่อง">
+        <button class="btn on" data-type="rsc">กล่อง RSC ฝาชน</button>
+        <button class="btn" data-type="die">Die-cut ฝาเสียบ</button>
+      </div>
+      <label class="flex items-center gap-2 text-xs"><input type="radio" name="dimset" value="id"> <span class="w-16">ขนาดใน (ID)</span>
+        <input id="id-l" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="ID ยาว" />
+        <input id="id-w" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="ID กว้าง" />
+        <input id="id-d" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="ID สูง" /></label>
+      <label class="flex items-center gap-2 text-xs"><input type="radio" name="dimset" value="sd" checked> <span class="w-16">ขนาดนอก (SD)</span>
+        <input id="sd-l" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="SD ยาว" />
+        <input id="sd-w" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="SD กว้าง" />
+        <input id="sd-d" type="number" min="0" value="0" inputmode="decimal" class="field" aria-label="SD สูง" /></label>
+      <p class="text-[11px]" style="color:var(--muted)">กล่อง 3D จะสร้างตามแถวที่เลือก (ปกติใช้ SD เพราะเป็นขนาดภายนอกที่พิมพ์ลาย) และต้องกรอกครบทั้ง 3 ค่าก่อน</p>
+      <div class="grid grid-cols-2 gap-1.5">
+        <button id="btn-sample" class="btn">ใส่ค่าจากตาราง</button>
+        <button id="btn-zero" class="btn">ล้างเป็น 0</button>
+      </div>
+    </div>
+  </details>
+
+  <div>
+    <div class="flex justify-between items-center mb-1">
+      <label for="fold" class="text-sm font-semibold">พับกล่อง</label>
+      <span id="fold-pct" class="text-xs font-bold" style="color:var(--accent)">100%</span>
+    </div>
+    <input id="fold" type="range" min="0" max="100" value="100" />
+    <div class="grid grid-cols-4 gap-1.5 mt-1">
+      <button class="btn" data-fold="0">กางแบน</button>
+      <button class="btn" data-fold="75">เปิดฝา</button>
+      <button class="btn" data-fold="100">ปิดกล่อง</button>
+      <button id="btn-play" class="btn on">▶ เล่น</button>
+    </div>
+  </div>
+
+  <div>
+    <p class="text-xs mb-1" style="color:var(--muted)">มุมมอง</p>
+    <div class="grid grid-cols-5 gap-1.5">
+      <button class="btn" data-view="iso">เฉียง</button>
+      <button class="btn" data-view="front">หน้า</button>
+      <button class="btn" data-view="side">ข้าง</button>
+      <button class="btn" data-view="top">บน</button>
+      <button id="btn-rot" class="btn">หมุน</button>
+    </div>
+  </div>
+
+  <details id="text-box" class="border-t pt-2" style="border-color:var(--line)">
+    <summary class="text-sm font-semibold flex justify-between">แก้ข้อความบนกล่อง <span style="color:var(--muted)">▾</span></summary>
+    <div class="mt-2 space-y-2">
+      <div><label for="f-name" class="text-xs" style="color:var(--muted)">ชื่อสินค้า</label>
+        <input id="f-name" class="field" value="BUFFALO MIDDLE WING" /></div>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label for="f-weight" class="text-xs" style="color:var(--muted)">น้ำหนักสุทธิ</label>
+          <input id="f-weight" class="field" value="10 kg" /></div>
+        <div><label for="f-pack" class="text-xs" style="color:var(--muted)">รูปแบบบรรจุ</label>
+          <input id="f-pack" class="field" value="(2 x 5 kg)" /></div>
+      </div>
+      <button id="btn-default" class="btn w-full">↺ กลับไปใช้ลายกล่องเดิม</button>
+      <p id="text-note" class="text-[11px] hidden" style="color:var(--muted)">กำลังใช้ภาพที่อัปโหลด — แก้ข้อความไม่ได้จนกว่าจะกลับไปใช้ลายเดิม</p>
+    </div>
+  </details>
+
+  <details class="border-t pt-2" style="border-color:var(--line)">
+    <summary class="text-sm font-semibold flex justify-between">ปรับแต่งขั้นสูง <span style="color:var(--muted)">▾</span></summary>
+    <div class="mt-2">
+      <div class="flex justify-between text-xs mb-1"><label for="offset">ความกว้างลิ้นติดกาว (ให้ตรงรอยพับของภาพ)</label><span id="offset-val" style="color:var(--muted)">2.2%</span></div>
+      <input id="offset" type="range" min="0" max="10" step="0.1" value="2.2" />
+    </div>
+  </details>
+</section>
+
+<script>
+const $ = id => document.getElementById(id);
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.remove('opacity-0'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.add('opacity-0'), 3800); }
+
+// ---------- Scene ----------
+const stage = $('stage');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0f172a);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+stage.appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.06; controls.minDistance = 2; controls.maxDistance = 18;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.72));
+const dir = new THREE.DirectionalLight(0xffffff, 0.75);
+dir.position.set(6, 10, 7); dir.castShadow = true; dir.shadow.bias = -0.0005; dir.shadow.normalBias = 0.03; dir.shadow.mapSize.set(2048, 2048);
+scene.add(dir);
+const back = new THREE.DirectionalLight(0xdbeafe, 0.35); back.position.set(-6, 5, -6); scene.add(back);
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.32 }));
+floor.rotation.x = -Math.PI / 2; floor.position.y = -1.25; floor.receiveShadow = true; scene.add(floor);
+const grid = new THREE.GridHelper(16, 16, 0x334155, 0x1e293b); grid.position.y = -1.25; scene.add(grid);
+
+// ---------- Default dieline texture ----------
+const dCanvas = document.createElement('canvas');
+dCanvas.width = 2400; dCanvas.height = 840;
+function drawDieline(opt, gr, d, tp) {
+  const [lm, wm, hm] = d, Wc = 2400, tot = 2 * lm + 2 * wm, s = (1 - gr) * Wc / tot;
+  const c = dCanvas; c.width = Wc; c.height = Math.max(8, Math.round(s * (tp.top + hm + tp.bot)));
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  const gP = gr * Wc, wL = s * lm, wW = s * wm, hT = s * tp.top, hF = s * tp.bot, hB = s * hm;
+  const x1 = gP, x2 = x1 + wL, x3 = x2 + wW, x4 = x3 + wL, yB = hT, yBot = hT + hB;
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 2;
+  ctx.strokeRect(0, yB, gP, hB);
+  [x1, x2, x3, x4].forEach((x, i) => { const w = i % 2 === 0 ? wL : wW; ctx.strokeRect(x, 0, w, hT); ctx.strokeRect(x, yB, w, hB); ctx.strokeRect(x, yBot, w, hF); });
+  const ink = '#0f172a', code = '2 8851006 239757';
+  // วาดลายในพื้นที่อ้างอิง (rw x rh) แล้วย่อ/ขยายสม่ำเสมอให้พอดีแผง
+  function area(x, y, w, h, rw, rh, fn) {
+    const k = Math.min(w / rw, h / rh);
+    ctx.save(); ctx.translate(x + (w - rw * k) / 2, y + (h - rh * k) / 2); ctx.scale(k, k); fn(); ctx.restore();
+  }
+  function logo(cx, cy) {
+    ctx.save(); ctx.translate(cx, cy); ctx.fillStyle = '#65a30d';
+    [[-8,-8],[8,-8],[-8,8],[8,8]].forEach(([a, b]) => { ctx.beginPath(); ctx.arc(a, b, 10, 0, 6.3); ctx.fill(); });
+    ctx.font = 'bold 28px Arial'; ctx.textAlign = 'left'; ctx.fillText('BETAGRO', 26, 10); ctx.restore();
+  }
+  function barcode(bx, by, bw, bh) {
+    ctx.save(); ctx.fillStyle = ink;
+    for (let i = 0; i < bw; i += 4) if ((i * 7) % 3 !== 0) ctx.fillRect(bx + i, by, i % 8 === 0 ? 3 : 1.5, bh - 14);
+    ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.fillText(code, bx + bw / 2, by + bh); ctx.restore();
+  }
+  const main = () => {
+    ctx.fillStyle = ink; ctx.font = 'bold 22px Arial'; ctx.textAlign = 'right'; ctx.fillText('Product of Thailand', 652, 46);
+    ctx.font = 'bold 34px Arial'; ctx.textAlign = 'center'; ctx.fillText(opt.name, 340, 185, 620);
+    ctx.font = '14px Arial'; ctx.textAlign = 'left';
+    ['Produced by : BETAGRO MF DELI CO.,LTD.', '333 Mu 5, Saraburi-lomsak Road, Chong Sarika,', 'Phatthana Nikhom, Lop Buri 15220 Thailand', 'www.betagro.com Origin : Thailand']
+      .forEach((t, i) => ctx.fillText(t, 28, 265 + i * 20));
+    logo(435, 235); barcode(545, 275, 105, 55);
+  };
+  area(x1, yB, wL, hB, 680, 360, main);
+  area(x3, yB, wL, hB, 680, 360, main);
+  area(x1, 0, wL, hT, 680, 240, () => { ctx.fillStyle = ink; ctx.font = 'bold 32px Arial'; ctx.textAlign = 'center'; ctx.fillText('KEEP FROZEN BELOW -18°C', 340, 145); });
+  area(x3, 0, wL, hT, 680, 240, () => {
+    ctx.lineWidth = 2.5; ctx.strokeStyle = ink; ctx.fillStyle = ink; ctx.textAlign = 'center';
+    ctx.beginPath(); ctx.ellipse(240, 130, 52, 34, 0, 0, 6.3); ctx.stroke();
+    ctx.font = 'bold 14px Arial'; ctx.fillText('THAILAND', 240, 118); ctx.fillText('EST.222', 240, 135);
+    ctx.font = '11px Arial'; ctx.fillText('DLD', 240, 150);
+    ctx.beginPath(); ctx.moveTo(460, 100); ctx.lineTo(505, 130); ctx.lineTo(460, 160); ctx.lineTo(415, 130); ctx.closePath(); ctx.stroke();
+    ctx.font = 'bold 16px Arial'; ctx.fillText('BMF', 460, 136);
+  });
+  area(x2, yB, wW, hB, 480, 360, () => {
+    ctx.strokeStyle = '#1e293b'; ctx.lineWidth = 2;
+    ctx.strokeRect(26, 35, 240, 290); ctx.strokeRect(280, 35, 175, 165);
+    ctx.fillStyle = ink; ctx.fillRect(280, 35, 175, 28);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('영양정보  총 내용량 ' + opt.weight, 288, 54, 160);
+    ctx.fillStyle = '#334155';
+    for (let r = 0; r < 11; r++) ctx.fillRect(38, 55 + r * 24, 210, 4);
+    for (let r = 0; r < 6; r++) ctx.fillRect(290, 78 + r * 20, 150, 4);
+    barcode(345, 215, 110, 60);
+  });
+  area(x2, yBot, wW, hF, 480, 240, () => { ctx.fillStyle = ink; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'center'; ctx.fillText('P000025708', 240, 115); });
+  area(x4, yB, wW, hB, 480, 360, () => {
+    ctx.fillStyle = ink; ctx.font = 'bold 20px Arial'; ctx.textAlign = 'right'; ctx.fillText('K000014715', 455, 45);
+    ctx.textAlign = 'left'; ctx.font = 'bold 22px Arial';
+    ctx.fillText('NET WEIGHT : ' + opt.weight, 25, 275, 430); ctx.fillText(opt.pack, 25, 305, 430);
+  });
+  area(x4, yBot, wW, hF, 480, 240, () => {
+    ctx.fillStyle = '#65a30d'; ctx.fillRect(190, 45, 34, 34);
+    ctx.fillStyle = ink; ctx.fillRect(190, 84, 34, 34); ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.strokeRect(210, 128, 56, 26);
+    ctx.font = 'bold 14px Arial'; ctx.textAlign = 'center'; ctx.fillText('TCSB', 238, 146);
+    ctx.font = '15px sans-serif'; ctx.fillText('พิมพ์วันที่ผลิตเป็นเลขไทย', 238, 210);
+  });
+}
+const getOpt = () => ({ name: $('f-name').value || ' ', weight: $('f-weight').value || ' ', pack: $('f-pack').value || ' ' });
+const defaultTex = new THREE.CanvasTexture(dCanvas);
+defaultTex.encoding = THREE.sRGBEncoding;
+defaultTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+let currentTexture = defaultTex, customActive = false;
+
+// ---------- Box ----------
+let L = 1, W = 1, H = 1, flapH = .5, glueW = .1, Tu = .5, Bu = .5, tuckH = .2, boxType = 'rsc', customImg = null, M = null, F = null, customCanvas = null;
+const innerMat = new THREE.MeshStandardMaterial({ color: 0xd6c7b2, roughness: 0.85, metalness: 0.02, side: THREE.BackSide });
+function createPanel(w, h, u0, u1, v0, v1, px, py, ins = 0) {
+  const geo = new THREE.PlaneGeometry(w, h); geo.translate(px, py, 0);
+  const pos = geo.attributes.position, uv = geo.attributes.uv;
+  if (ins > 0) { // ทำขอบปลายปีกให้เรียวเป็นทรงคางหมู
+    const up = py > 0;
+    for (let i = 0; i < 4; i++) if ((pos.getY(i) > py) === up) pos.setX(i, pos.getX(i) + (pos.getX(i) > px ? -ins : ins));
+    pos.needsUpdate = true;
+  }
+  for (let i = 0; i < 4; i++) uv.setXY(i, u0 + (pos.getX(i) - (px - w / 2)) / w * (u1 - u0), v0 + (pos.getY(i) - (py - h / 2)) / h * (v1 - v0));
+  uv.needsUpdate = true;
+  const outerMat = new THREE.MeshStandardMaterial({ map: currentTexture, roughness: 0.55, metalness: 0.05 });
+  const g = new THREE.Group();
+  const outer = new THREE.Mesh(geo, outerMat); outer.castShadow = true;
+  g.add(outer, new THREE.Mesh(geo.clone(), innerMat));
+  g.userData.outerMat = outerMat;
+  return g;
+}
+const boxRoot = new THREE.Group(); scene.add(boxRoot);
+let panels = [], J = {};
+function buildBox(gr = 0.022) {
+  while (boxRoot.children.length) boxRoot.remove(boxRoot.children[0]);
+  panels = [];
+  if (boxType === 'map' && !(M && customActive)) { boxType = 'rsc'; syncTypeBtns(); }
+  if (boxType === 'map') return buildMapBox();
+  if (boxType === 'free' && !(F && F.root && F.panels.length > 1 && customActive)) { boxType = 'rsc'; syncTypeBtns(); }
+  if (boxType === 'free') return buildFreeBox();
+  const die = boxType === 'die';
+  const rem = 1 - gr, tot = 2 * L + 2 * W; glueW = gr / rem * tot;
+  const u1 = gr, u2 = u1 + rem * L / tot, u3 = u2 + rem * W / tot, u4 = u3 + rem * L / tot, u5 = 1;
+  const rows = Tu + H + Bu, vB1 = Bu / rows, vM1 = (Bu + H) / rows;
+  const mk = (...a) => { const p = createPanel(...a); panels.push(p); return p; };
+  const p1 = mk(L, H, u1, u2, vB1, vM1, 0, 0); boxRoot.add(p1);
+  const glue = mk(glueW, H, 0, gr, vB1, vM1, -glueW / 2, 0); glue.position.set(-L / 2 + 0.012, 0, 0); p1.add(glue);
+  const p2 = mk(W, H, u2, u3, vB1, vM1, W / 2, 0); p2.position.set(L / 2, 0, 0); p1.add(p2);
+  const p3 = mk(L, H, u3, u4, vB1, vM1, L / 2, 0); p3.position.set(W, 0, 0); p2.add(p3);
+  const p4 = mk(W, H, u4, u5, vB1, vM1, W / 2, 0); p4.position.set(L, 0, 0); p3.add(p4);
+  const bot = (p, w, ua, ub, x, ins) => { const b = mk(w, Bu, ua, ub, 0, vB1, 0, -Bu / 2, die ? ins : 0); b.position.set(x, -H / 2, 0); p.add(b); return b; };
+  const b1 = bot(p1, L, u1, u2, 0, W * 0.06), b2 = bot(p2, W, u2, u3, W / 2, W * 0.13);
+  const b3 = bot(p3, L, u3, u4, L / 2, W * 0.06), b4 = bot(p4, W, u4, u5, W / 2, W * 0.13);
+  let t1, t2, t3, t4, tuck = null;
+  if (!die) {
+    const top = (p, w, ua, ub, x) => { const t = mk(w, Tu, ua, ub, vM1, 1, 0, Tu / 2); t.position.set(x, H / 2, 0); p.add(t); return t; };
+    t1 = top(p1, L, u1, u2, 0); t2 = top(p2, W, u2, u3, W / 2); t3 = top(p3, L, u3, u4, L / 2); t4 = top(p4, W, u4, u5, W / 2);
+  } else {
+    const lh = W - 0.03; // ฝาใหญ่คลุมหน้ากล่อง แล้วมีลิ้นเสียบลงด้านหลัง
+    t1 = mk(L, lh, u1, u2, vM1, vM1 + lh / rows, 0, lh / 2, L * 0.02); t1.position.set(0, H / 2, 0); p1.add(t1);
+    tuck = mk(L, tuckH, u1, u2, vM1 + lh / rows, vM1 + (lh + tuckH) / rows, 0, tuckH / 2, L * 0.07); tuck.position.set(0, lh, 0); t1.add(tuck);
+    const dust = (p, ua, ub) => { const t = mk(W, tuckH, ua, ub, vM1, vM1 + tuckH / rows, 0, tuckH / 2, W * 0.14); t.position.set(W / 2, H / 2, 0); p.add(t); return t; };
+    t2 = dust(p2, u2, u3); t4 = dust(p4, u4, u5); t3 = new THREE.Group();
+  }
+  J = { p1, p2, p3, p4, glue, t1, t2, t3, t4, b1, b2, b3, b4, tuck, tucks: [tuck] };
+  updateFold(+$('fold').value);
+}
+function updateFold(pct) {
+  $('fold-pct').textContent = Math.round(pct) + '%';
+  if (boxType === 'free') { updateFree(pct / 100); return; }
+  const t = pct / 100, wp = Math.min(t / 0.5, 1), wa = wp * Math.PI / 2;
+  J.p2.rotation.y = J.p3.rotation.y = J.p4.rotation.y = wa; J.glue.rotation.y = -wa;
+  J.p1.position.z = (W / 2) * wp;
+  const fp = Math.max((t - 0.5) / 0.5, 0), dp = Math.min(fp / 0.6, 1), mp = Math.max((fp - 0.35) / 0.65, 0);
+  const da = dp * Math.PI / 2, ma = mp * (Math.PI / 2 - 0.015);
+  J.b2.rotation.x = J.b4.rotation.x = da; J.b1.rotation.x = J.b3.rotation.x = ma;
+  if (boxType !== 'rsc') {
+    J.t2.rotation.x = J.t4.rotation.x = -dp * (Math.PI / 2 + 0.02);
+    J.t1.rotation.x = J.t3.rotation.x = -mp * (Math.PI / 2 - 0.02);
+    (J.tucks || [J.tuck]).forEach(k => k && (k.rotation.x = -Math.max((mp - 0.6) / 0.4, 0) * (Math.PI / 2)));
+  } else {
+    J.t2.rotation.x = J.t4.rotation.x = -da; J.t1.rotation.x = J.t3.rotation.x = -ma;
+  }
+}
+// (กล่องสร้างโดย refresh())
+
+// ---------- Fold controls ----------
+let anim = null;
+function setFold(v, animate = true) {
+  cancelAnimationFrame(anim);
+  const from = +$('fold').value, to = v, t0 = performance.now(), dur = animate ? 900 : 0;
+  (function step(now) {
+    const k = dur ? Math.min((now - t0) / dur, 1) : 1, e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    const val = from + (to - from) * e; $('fold').value = val; updateFold(val);
+    if (k < 1) anim = requestAnimationFrame(step);
+  })(t0);
+}
+$('fold').addEventListener('input', e => { cancelAnimationFrame(anim); updateFold(+e.target.value); });
+document.querySelectorAll('[data-fold]').forEach(b => b.onclick = () => setFold(+b.dataset.fold));
+$('btn-play').onclick = () => { $('fold').value = 0; updateFold(0); setTimeout(() => { cancelAnimationFrame(anim); const t0 = performance.now(); (function s(n) { const k = Math.min((n - t0) / 3000, 1); $('fold').value = k * 100; updateFold(k * 100); if (k < 1) anim = requestAnimationFrame(s); })(t0); }, 50); };
+$('offset').addEventListener('input', e => { $('offset-val').textContent = (+e.target.value).toFixed(1) + '%'; refresh(); });
+
+// ---------- Views ----------
+const VIEWS = { iso: [5.2, 4.2, 6.2], front: [0, 0.3, 8.5], side: [8.5, 0.3, 0], top: [0, 9.5, 0.01] };
+function setView(n) { camera.position.set(...VIEWS[n]); controls.target.set(0, 0, 0); controls.update(); }
+setView('iso');
+document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => setView(b.dataset.view));
+$('btn-rot').onclick = e => { controls.autoRotate = !controls.autoRotate; controls.autoRotateSpeed = 2; e.currentTarget.classList.toggle('on', controls.autoRotate); };
+
+// ---------- Texture ----------
+function applyTexture(tex) { currentTexture = tex; panels.forEach(p => { p.userData.outerMat.map = tex; p.userData.outerMat.needsUpdate = true; }); }
+function setCustom(on) { customActive = on; $('text-note').classList.toggle('hidden', !on); document.querySelectorAll('#text-box .field').forEach(f => f.disabled = on); }
+let dt; ['f-name', 'f-weight', 'f-pack'].forEach(id => $(id).addEventListener('input', () => {
+  if (customActive) return; clearTimeout(dt);
+  dt = setTimeout(() => { redraw(); if (id === 'f-name') refresh(); }, 150);
+}));
+$('btn-default').onclick = () => { applyTexture(defaultTex); setCustom(false); toast('กลับไปใช้ลายกล่องเดิมแล้ว'); };
+$('upload').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = ev => { const img = new Image(); img.onload = () => {
+    const k0 = Math.min(1, 4096 / Math.max(img.naturalWidth, img.naturalHeight)), cv = document.createElement('canvas');
+    cv.width = Math.round(img.naturalWidth * k0); cv.height = Math.round(img.naturalHeight * k0);
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0, cv.width, cv.height);
+    const tex = new THREE.CanvasTexture(cv); customCanvas = cv; tex.encoding = THREE.sRGBEncoding; tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); tex.needsUpdate = true;
+    customImg = img; M = null; F = null; if (boxType === 'map') { boxType = 'rsc'; syncTypeBtns(); }
+    applyTexture(tex); setCustom(true); $('text-box').open = false;
+    toast('ใส่ภาพ Dieline แล้ว — กด “ตั้งจุดพับตามภาพ” เพื่อให้กล่องพับตรงรอยพับจริง');
+    setTimeout(() => runBarcode('image'), 500);
+  }; img.src = ev.target.result; };
+  r.readAsDataURL(f); e.target.value = '';
+});
+
+// ---------- Save helpers ----------
+async function saveFile(filename, data, fallbackMime) {
+  let dl = null;
+  try { dl = await claude.use('downloads'); } catch (e) {}
+  if (dl) {
+    try { await dl.save({ filename, data }); return true; }
+    catch (err) { if (err && err.code === 'declined') return false; }
+  }
+  try {
+    const blob = data instanceof Blob ? data : new Blob([data], { type: fallbackMime });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000); return true;
+  } catch (e) { return false; }
+}
+$('btn-png').onclick = async () => {
+  renderer.render(scene, camera);
+  const blob = await new Promise(r => renderer.domElement.toBlob(r, 'image/png'));
+  if (await saveFile('box-mockup.png', blob, 'image/png')) toast('บันทึกภาพแล้ว');
+};
+$('btn-glb').onclick = () => {
+  toast('กำลังสร้างไฟล์ AR…');
+  const prev = +$('fold').value; updateFold(100);
+  new THREE.GLTFExporter().parse(boxRoot, async glb => {
+    updateFold(prev);
+    const name = ($('f-name').value || 'box').replace(/[^\w]+/g, '_');
+    const blob = new Blob([glb], { type: 'model/gltf-binary' });
+    let ok = false;
+    if (typeof JSZip !== 'undefined') {
+      const zip = new JSZip(); zip.file(name + '.glb', glb);
+      ok = await saveFile(name + '_AR.zip', await zip.generateAsync({ type: 'blob' }), 'application/zip');
+      if (ok) toast('ได้ไฟล์ .zip แล้ว — แตกไฟล์เพื่อใช้ .glb กับแอป AR (เช่น Quick Look, Scene Viewer)');
+    } else { ok = await saveFile(name + '.glb', blob, 'model/gltf-binary'); }
+  }, { binary: true });
+};
+
+// ---------- AR camera backdrop ----------
+let stream = null;
+$('btn-ar').onclick = async e => {
+  const v = $('ar-video'), b = e.currentTarget;
+  if (!stream) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      v.srcObject = stream; v.classList.remove('hidden'); scene.background = null; grid.visible = false;
+      b.textContent = '✖ ปิดกล้อง'; b.classList.add('on'); toast('หมุน/ซูมกล่องด้วยนิ้วเพื่อดูทับภาพจริง');
+    } catch (err) { stream = null; toast('เปิดกล้องไม่ได้ — โปรดอนุญาตสิทธิ์กล้อง หรือเปิดหน้านี้ผ่าน HTTPS'); }
+  } else {
+    stream.getTracks().forEach(t => t.stop()); stream = null; v.classList.add('hidden');
+    scene.background = new THREE.Color(0x0f172a); grid.visible = true; b.textContent = '📱 เปิดกล้องทับภาพ'; b.classList.remove('on');
+  }
+};
+
+// ---------- ขนาดกล่อง ----------
+let curDims = [440, 305, 160];
+function dims() { const t = document.querySelector('input[name=dimset]:checked').value; return ['l', 'w', 'd'].map(k => Math.max(0, +$(t + '-' + k).value || 0)); }
+function redraw() { drawDieline(getOpt(), +$('offset').value / 100, curDims, { top: Tu * 100, bot: Bu * 100 }); defaultTex.dispose(); defaultTex.needsUpdate = true; }
+function refresh() {
+  const d = dims(), ok = d.every(v => v > 0);
+  if (ok) curDims = d;
+  const [l, w, h] = curDims;
+  L = l / 100; W = w / 100; H = h / 100; flapH = W / 2; Bu = W / 2; tuckH = H * 0.17; Tu = boxType === 'die' ? W + tuckH : W / 2;
+  floor.position.y = grid.position.y = -H / 2 - 0.35;
+  redraw(); buildBox(+$('offset').value / 100);
+  const vis = ok || boxType === 'free'; boxRoot.visible = vis; $('empty').classList.toggle('hidden', vis);
+  $('subtitle').textContent = ok ? `${boxType === 'die' ? 'Die-cut ฝาเสียบ' : 'RSC'} • ${$('f-name').value} • ${l}×${w}×${h} มม.` : 'ยังไม่ได้ใส่ขนาดกล่อง';
+}
+let rt; document.querySelectorAll('#size-box input').forEach(el => el.addEventListener('input', () => { clearTimeout(rt); rt = setTimeout(refresh, 200); }));
+document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => {
+  boxType = b.dataset.type;
+  document.querySelectorAll('[data-type]').forEach(x => x.classList.toggle('on', x === b));
+  refresh(); setFold(+$('fold').value, false);
+  toast(boxType === 'die' ? 'Die-cut: ฝาใหญ่พับคลุมและเสียบลิ้นลงด้านหลัง ก้นเป็นปีกเฉียงมุม' : 'กล่อง RSC ฝาชนมาตรฐาน');
+});
+$('btn-sample').onclick = () => { [440, 305, 160].forEach((v, i) => $('id-' + 'lwd'[i]).value = v); [448, 313, 175].forEach((v, i) => $('sd-' + 'lwd'[i]).value = v); refresh(); };
+$('btn-zero').onclick = () => { document.querySelectorAll('#size-box input[type=number]').forEach(el => el.value = 0); refresh(); };
+refresh();
+
+// ---------- Fold Map: ตั้งจุดพับตามภาพ ----------
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+function syncTypeBtns() { document.querySelectorAll('[data-type]').forEach(x => x.classList.toggle('on', x.dataset.type === boxType)); }
+function quadPanel(vs, uvs) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(vs.flatMap(v => [v[0], v[1], 0]), 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs.flat(), 2));
+  let a = 0; vs.forEach((v, i) => { const n = vs[(i + 1) % 4]; a += v[0] * n[1] - n[0] * v[1]; });
+  geo.setIndex(a > 0 ? [0, 1, 2, 0, 2, 3] : [0, 2, 1, 0, 3, 2]); geo.computeVertexNormals();
+  const outerMat = new THREE.MeshStandardMaterial({ map: currentTexture, roughness: 0.55, metalness: 0.05 });
+  const g = new THREE.Group(), outer = new THREE.Mesh(geo, outerMat); outer.castShadow = true;
+  g.add(outer, new THREE.Mesh(geo.clone(), innerMat)); g.userData.outerMat = outerMat; panels.push(g); return g;
+}
+function defaultMap() {
+  const [Lm, Wm, Hm] = curDims, gr = +$('offset').value / 100, tk = Hm * 0.17, rows = Wm + tk + Hm + Wm / 2, sx = (1 - gr) / (2 * Lm + 2 * Wm);
+  const x1 = gr, x2 = x1 + Lm * sx, x3 = x2 + Wm * sx, x4 = x3 + Lm * sx, x = [0, x1, x2, x3, x4, 1];
+  const y0 = (Wm + tk) / rows, y1 = (Wm + tk + Hm) / rows, dy = y0 - tk / rows, ix = mm => mm * sx;
+  const f = (xl, xr, yy, i) => ({ l: [xl + ix(i), yy], r: [xr - ix(i), yy] });
+  return { x, y: [y0, y1],
+    T: [f(x1, x2, 0, Lm * .02), f(x2, x3, dy, Wm * .14), f(x3, x4, y0, 0), f(x4, 1, dy, Wm * .14)],
+    B: [f(x1, x2, 1, Wm * .06), f(x2, x3, 1, Wm * .13), f(x3, x4, 1, Wm * .06), f(x4, 1, 1, Wm * .13)],
+    G: { t: [0, y0 + 0.03], b: [0, y1 - 0.03] } };
+}
+function buildMapBox() {
+  while (boxRoot.children.length) boxRoot.remove(boxRoot.children[0]);
+  panels = [];
+  const iw = customImg.naturalWidth, ih = customImg.naturalHeight, sc = L / ((M.x[2] - M.x[1]) * iw), [y0, y1] = M.y;
+  const mk = (...a) => { const p = createPanel(...a); panels.push(p); return p; };
+  const body = (c, w, px) => mk(w, H, M.x[c + 1], M.x[c + 2], 1 - y1, 1 - y0, px, 0);
+  const p1 = body(0, L, 0); boxRoot.add(p1);
+  const p2 = body(1, W, W / 2); p2.position.set(L / 2, 0, 0); p1.add(p2);
+  const p3 = body(2, L, L / 2); p3.position.set(W, 0, 0); p2.add(p3);
+  const p4 = body(3, W, W / 2); p4.position.set(L, 0, 0); p3.add(p4);
+  const { t: gT, b: gB } = M.G, gx = M.x[1];
+  const glue = quadPanel([[0, H / 2], [0, -H / 2], [(gB[0] - gx) * iw * sc, -H / 2 - (gB[1] - y1) * ih * sc], [(gT[0] - gx) * iw * sc, H / 2 + (y0 - gT[1]) * ih * sc]],
+    [[gx, 1 - y0], [gx, 1 - y1], [gB[0], 1 - gB[1]], [gT[0], 1 - gT[1]]]);
+  glue.position.set(-L / 2 + 0.012, 0, 0); p1.add(glue);
+  const cols = [[p1, L, 0], [p2, W, W / 2], [p3, L, L / 2], [p4, W, W / 2]];
+  const lerp = (a, b, t) => ({ p: [a.p[0] + (b.p[0] - a.p[0]) * t, a.p[1] + (b.p[1] - a.p[1]) * t], uv: [a.uv[0] + (b.uv[0] - a.uv[0]) * t, a.uv[1] + (b.uv[1] - a.uv[1]) * t] });
+  const grp = vs => quadPanel(vs.map(v => v.p), vs.map(v => v.uv));
+  function flap(dir, c) {
+    const [p, w, cx] = cols[c], xl = M.x[c + 1], xr = M.x[c + 2], yb = dir > 0 ? y0 : y1, F = dir > 0 ? M.T[c] : M.B[c];
+    const ly = Math.abs(F.l[1] - yb) * ih * sc, ry = Math.abs(F.r[1] - yb) * ih * sc;
+    if (Math.min(ly, ry) < 0.03) return {};
+    const V = [{ p: [-w / 2, 0], uv: [xl, 1 - yb] }, { p: [w / 2, 0], uv: [xr, 1 - yb] },
+      { p: [w / 2 + (F.r[0] - xr) * iw * sc, dir * ry], uv: [F.r[0], 1 - F.r[1]] }, { p: [-w / 2 + (F.l[0] - xl) * iw * sc, dir * ly], uv: [F.l[0], 1 - F.l[1]] }];
+    const cut = len => [lerp(V[0], V[3], Math.min(1, len / ly)), lerp(V[1], V[2], Math.min(1, len / ry))];
+    let main, tuck = null;
+    if (dir > 0 && c % 2 === 0 && (ly + ry) / 2 > W * 0.8) { // ฝาใหญ่ + ลิ้นเสียบ
+      const [mL, mR] = cut(W - 0.03); main = grp([V[0], V[1], mR, mL]);
+      const ox = (mL.p[0] + mR.p[0]) / 2, oy = (mL.p[1] + mR.p[1]) / 2, sh = v => ({ p: [v.p[0] - ox, v.p[1] - oy], uv: v.uv });
+      tuck = grp([sh(mL), sh(mR), sh(V[2]), sh(V[3])]); tuck.position.set(ox, oy, 0); main.add(tuck);
+    } else { const [mL, mR] = cut(W / 2 - 0.005); main = grp([V[0], V[1], mR, mL]); }
+    main.position.set(cx, dir * H / 2, 0); p.add(main); return { main, tuck };
+  }
+  const t = [0, 1, 2, 3].map(c => flap(1, c)), b = [0, 1, 2, 3].map(c => flap(-1, c)), E = () => new THREE.Group();
+  J = { p1, p2, p3, p4, glue, t1: t[0].main || E(), t2: t[1].main || E(), t3: t[2].main || E(), t4: t[3].main || E(),
+    b1: b[0].main || E(), b2: b[1].main || E(), b3: b[2].main || E(), b4: b[3].main || E(), tucks: [t[0].tuck, t[2].tuck].filter(Boolean) };
+  updateFold(+$('fold').value);
+}
+// --- ตัวแก้ไขจุดพับ ---
+const wrap = $('ed-wrap'), edSvg = $('ed-svg'); let handles = [];
+const poly = (pts, c) => `<polygon points="${pts.map(q => q.join(',')).join(' ')}" fill="${c}33" stroke="${c}" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+const vline = (a, b, c) => `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="${c}" stroke-width="1.5" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>`;
+function place() {
+  handles.forEach(h => { const [x, y] = h.get(); h.e.style.left = x * 100 + '%'; h.e.style.top = y * 100 + '%'; });
+  let h = '';
+  M.x.forEach(x => h += vline([x, 0], [x, 1], '#22d3ee')); M.y.forEach(y => h += vline([0, y], [1, y], '#22d3ee'));
+  [1, 2, 3, 4].forEach((xi, c) => { const xl = M.x[xi], xr = M.x[xi + 1];
+    h += poly([[xl, M.y[0]], [xr, M.y[0]], M.T[c].r, M.T[c].l], '#a3e635') + poly([[xl, M.y[1]], [xr, M.y[1]], M.B[c].r, M.B[c].l], '#fb923c'); });
+  edSvg.innerHTML = h + poly([[M.x[1], M.y[0]], [M.x[1], M.y[1]], M.G.b, M.G.t], '#e879f9');
+}
+function addHandle(cls, get, set) {
+  const e = document.createElement('div'); e.className = 'hd ' + cls; wrap.appendChild(e); handles.push({ e, get });
+  e.onpointerdown = ev => { e.setPointerCapture(ev.pointerId); e.d = true; ev.preventDefault(); };
+  e.onpointermove = ev => { if (!e.d) return; const r = wrap.getBoundingClientRect(); set(clamp((ev.clientX - r.left) / r.width), clamp((ev.clientY - r.top) / r.height)); place(); };
+  e.onpointerup = e.onpointercancel = () => e.d = false;
+}
+function buildEditor() {
+  wrap.querySelectorAll('.hd').forEach(e => e.remove()); handles = [];
+  M.x.forEach((_, i) => addHandle('k-l', () => [M.x[i], 0.03], x => M.x[i] = x));
+  M.y.forEach((_, i) => addHandle('k-l', () => [0.03, M.y[i]], (x, y) => M.y[i] = y));
+  for (let c = 0; c < 4; c++) for (const s of ['l', 'r']) {
+    addHandle('k-t', () => M.T[c][s], (x, y) => M.T[c][s] = [x, y]);
+    addHandle('k-b', () => M.B[c][s], (x, y) => M.B[c][s] = [x, y]);
+  }
+  addHandle('k-g', () => M.G.t, (x, y) => M.G.t = [x, y]); addHandle('k-g', () => M.G.b, (x, y) => M.G.b = [x, y]);
+  place();
+}
+$('btn-map').onclick = () => {
+  if (!customImg) { toast('อัปโหลดภาพ Dieline ก่อน (ปุ่มด้านบน) แล้วค่อยตั้งจุดพับ'); return; }
+  if (!M) M = defaultMap();
+  $('ed-img').src = customImg.src; $('editor').classList.remove('hidden'); $('editor').classList.add('flex');
+  $('ed-img').onload = buildEditor; if ($('ed-img').complete) buildEditor();
+};
+const closeEd = () => { $('editor').classList.add('hidden'); $('editor').classList.remove('flex'); };
+$('ed-close').onclick = closeEd;
+$('ed-reset').onclick = () => { M = defaultMap(); buildEditor(); };
+$('ed-apply').onclick = () => {
+  closeEd(); boxType = 'map'; syncTypeBtns(); refresh(); setFold(+$('fold').value, false);
+  toast('พับตามจุดพับที่ตั้งไว้แล้ว — ลองเลื่อนแถบพับดู ถ้ายังเพี้ยนกดตั้งจุดพับแก้ได้อีก');
+};
+
+// ---------- ระบบอิสระ: วาดแผง + รอยพับเอง ----------
+const FE = { tool: 'rect', draft: [], drag: null, iw: 1, ih: 1, undo: [] };
+const feWrap = $('fe-wrap'), feSvg = $('fe-svg');
+const feCol = id => `hsl(${(id * 53) % 360} 75% 58%)`;
+const feK = () => FE.iw / feWrap.getBoundingClientRect().width;
+const feNat = ev => { const r = feWrap.getBoundingClientRect(); return [(ev.clientX - r.left) / r.width * FE.iw, (ev.clientY - r.top) / r.height * FE.ih]; };
+const feInPoly = (p, pts) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) if ((pts[i][1] > p[1]) !== (pts[j][1] > p[1]) && p[0] < (pts[j][0] - pts[i][0]) * (p[1] - pts[i][1]) / (pts[j][1] - pts[i][1]) + pts[i][0]) c = !c; return c; };
+const feSeg = (p, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy; let t = l2 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2 : 0; t = Math.max(0, Math.min(1, t)); return [a[0] + dx * t, a[1] + dy * t]; };
+function feSnap(p, exP = new Set(), exR = [], vOnly = false) {
+  const R = 14 * feK(); let best = null, bd = R;
+  const cons = q => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; best = q.slice(); } };
+  F.panels.forEach((pn, pi) => pn.pts.forEach((q, vi) => { if (!exR.some(e => e[0] === pi && e[1] === vi)) cons(q); }));
+  FE.draft.forEach(cons);
+  if (best) return best;
+  if (!vOnly) F.panels.forEach((pn, pi) => { if (!exP.has(pi)) pn.pts.forEach((q, vi) => cons(feSeg(p, q, pn.pts[(vi + 1) % pn.pts.length]))); });
+  return best || p;
+}
+function feOverlap(p1, p2, q1, q2, tol) { // ขอบสองเส้นทับกันเป็นแนวเดียวกันหรือไม่
+  const dx = p2[0] - p1[0], dy = p2[1] - p1[1], len = Math.hypot(dx, dy); if (len < 1) return null;
+  const ux = dx / len, uy = dy / len, dist = q => Math.abs((q[0] - p1[0]) * uy - (q[1] - p1[1]) * ux);
+  if (dist(q1) > tol || dist(q2) > tol) return null;
+  const s1 = (q1[0] - p1[0]) * ux + (q1[1] - p1[1]) * uy, s2 = (q2[0] - p1[0]) * ux + (q2[1] - p1[1]) * uy;
+  const a = Math.max(0, Math.min(s1, s2)), b = Math.min(len, Math.max(s1, s2));
+  return b - a < tol * 2 ? null : { A: [p1[0] + ux * a, p1[1] + uy * a], B: [p1[0] + ux * b, p1[1] + uy * b], len: b - a };
+}
+function feHinges() {
+  const tol = Math.max(2.5, FE.iw * 0.003), out = [];
+  for (let i = 0; i < F.panels.length; i++) for (let j = i + 1; j < F.panels.length; j++) {
+    const P = F.panels[i].pts, Q = F.panels[j].pts; let best = null;
+    P.forEach((a, ai) => Q.forEach((c, ci) => { const o = feOverlap(a, P[(ai + 1) % P.length], c, Q[(ci + 1) % Q.length], tol); if (o && (!best || o.len > best.len)) best = o; }));
+    if (best) out.push({ a: F.panels[i].id, b: F.panels[j].id, key: F.panels[i].id + '-' + F.panels[j].id, A: best.A, B: best.B });
+  }
+  return out;
+}
+function feTree() {
+  const root = F.panels.find(p => p.id === F.root); if (!root) return null;
+  const hs = feHinges(), adj = {};
+  hs.forEach(h => { if ((F.cfg[h.key] || {}).cut) return; (adj[h.a] = adj[h.a] || []).push(h); (adj[h.b] = adj[h.b] || []).push(h); });
+  const seen = new Set([root.id]), nodes = [{ id: root.id, parent: null, depth: 0 }], used = new Set(), q = [root.id];
+  while (q.length) { const cur = q.shift(), d = nodes.find(n => n.id === cur).depth;
+    (adj[cur] || []).forEach(h => { const o = h.a === cur ? h.b : h.a; if (seen.has(o)) return; seen.add(o); used.add(h.key); nodes.push({ id: o, parent: cur, depth: d + 1, hinge: h }); q.push(o); }); }
+  return { nodes, used, hs, unreached: F.panels.filter(p => !seen.has(p.id)).map(p => p.id) };
+}
+function feSnapshot() { FE.undo.push(JSON.stringify({ panels: F.panels, root: F.root, cfg: F.cfg, nextId: F.nextId })); if (FE.undo.length > 60) FE.undo.shift(); }
+function feDraw() {
+  const k = feK(); let h = '';
+  F.panels.forEach(pn => { const c = feCol(pn.id), sel = pn.id === F.sel;
+    h += `<polygon points="${pn.pts.map(q => q.join(',')).join(' ')}" fill="${c}${sel ? '66' : '33'}" stroke="${pn.id === F.root ? '#fff' : c}" stroke-width="${(sel || pn.id === F.root ? 4 : 2) * k}"/>`; });
+  const hs = feHinges(); hs.forEach(x => h += `<line x1="${x.A[0]}" y1="${x.A[1]}" x2="${x.B[0]}" y2="${x.B[1]}" stroke="${(F.cfg[x.key] || {}).cut ? '#f87171' : '#22d3ee'}" stroke-width="${5 * k}" stroke-linecap="round" ${(F.cfg[x.key] || {}).cut ? `stroke-dasharray="${10 * k} ${8 * k}"` : ''}/>`);
+  F.panels.forEach(pn => { const cx = pn.pts.reduce((a, q) => a + q[0], 0) / pn.pts.length, cy = pn.pts.reduce((a, q) => a + q[1], 0) / pn.pts.length;
+    h += `<text x="${cx}" y="${cy}" font-size="${18 * k}" fill="#fff" stroke="#000" stroke-width="${4 * k}" paint-order="stroke" text-anchor="middle" dominant-baseline="middle" font-weight="700">${pn.id}${pn.id === F.root ? '★' : ''}</text>`;
+    if (FE.tool === 'move') pn.pts.forEach(q => h += `<circle cx="${q[0]}" cy="${q[1]}" r="${5 * k}" fill="#fff" stroke="#0f172a" stroke-width="${k}"/>`); });
+  const D = FE.drag && FE.drag.t === 'rect' ? [FE.drag.a, [FE.drag.b[0], FE.drag.a[1]], FE.drag.b, [FE.drag.a[0], FE.drag.b[1]]] : FE.draft;
+  if (D.length) h += `<polyline points="${D.map(q => q.join(',')).join(' ')}${FE.drag ? ' ' + D[0].join(',') : ''}" fill="none" stroke="#facc15" stroke-width="${3 * k}"/>` + D.map(q => `<circle cx="${q[0]}" cy="${q[1]}" r="${5 * k}" fill="#facc15"/>`).join('');
+  feSvg.innerHTML = h; $('fe-poly-done').classList.toggle('hidden', !(FE.tool === 'poly' && FE.draft.length >= 3));
+}
+function feList() {
+  const T = F.root ? feTree() : null; let h = '';
+  if (!F.panels.length) h = '<p>ยังไม่มีแผง — วาดแผงบนภาพให้ครบทุกชิ้นของ Dieline (ตัวกล่อง ฝา ปีก ลิ้นกาว)</p>';
+  else if (!F.root) h = '<p style="color:#fbbf24">ขั้นต่อไป: เลือกแผงที่เป็นพื้นกล่อง/แผงตั้งต้นด้วย ✋ แล้วกด ★ ตั้งเป็นแผงฐาน (แผงฐานอยู่กับที่ แผงอื่นพับเทียบกับมัน)</p>';
+  else {
+    h = '<p style="color:var(--muted)">รอยพับ = ขอบที่แผงสองชิ้นใช้ร่วมกัน (เส้นฟ้าบนภาพ) ปรับมุมองศา ลำดับขั้นการพับ หรือตัดแยกได้</p>';
+    T.hs.forEach(x => { const c = F.cfg[x.key] || {}, n = T.nodes.find(m => m.hinge && m.hinge.key === x.key);
+      h += `<div class="panel rounded-lg px-2 py-1 flex flex-wrap items-center gap-2"><b class="w-24">แผง ${x.a} ⇄ ${x.b}</b>` +
+        (n ? `มุม°<input data-k="${x.key}" data-f="angle" type="number" class="field" style="width:4rem" value="${c.angle ?? 90}"> ขั้นที่<input data-k="${x.key}" data-f="phase" type="number" min="1" class="field" style="width:3.5rem" value="${c.phase || n.depth}">` : `<span style="color:var(--muted)">${c.cut ? 'ตัดแยกแล้ว' : '(ซ้ำ ไม่ใช้พับ)'}</span>`) +
+        `<button class="btn ${c.flip ? 'on' : ''}" data-act="flip" data-k="${x.key}">⇅ กลับด้านพับ</button><button class="btn ${c.cut ? 'on' : ''}" data-act="cut" data-k="${x.key}">✂ ตัดแยก</button></div>`; });
+    if (T.unreached.length) h += `<p style="color:#fbbf24">แผง ${T.unreached.join(', ')} ยังไม่เชื่อมกับแผงฐาน (ขอบไม่ทับกัน) จึงจะไม่แสดงใน 3D — ลองใช้ ✋ ลากจุดให้ชิดขอบกัน</p>`;
+  }
+  $('fe-list').innerHTML = h;
+}
+const feAll = () => { feDraw(); feList(); };
+$('fe-list').addEventListener('input', e => { const t = e.target; if (t.dataset.f) (F.cfg[t.dataset.k] = F.cfg[t.dataset.k] || {})[t.dataset.f] = +t.value; });
+$('fe-list').addEventListener('click', e => { const b = e.target.closest('[data-act]'); if (!b) return; feSnapshot(); const c = F.cfg[b.dataset.k] = F.cfg[b.dataset.k] || {}; if (b.dataset.act === 'flip') c.flip = !c.flip; else c.cut = !c.cut; feAll(); });
+function feTool(t) {
+  FE.tool = t; FE.draft = []; FE.drag = null;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+  $('fe-help').textContent = { rect: 'ลากเป็นสี่เหลี่ยมครอบแผงบนภาพ — มุมและขอบจะ “ดูด” ติดแผงที่วาดไว้แล้ว เพื่อให้เกิดรอยพับร่วมกัน', poly: 'แตะทีละมุมของแผง (ใช้กับแผงเฉียง/โค้ง/ทรงพิเศษ) แล้วแตะจุดแรกอีกครั้ง หรือกด ✔ ปิดรูป', move: 'แตะแผงเพื่อเลือก • ลากจุดขาวเพื่อปรับรูปร่าง (จุดที่ซ้อนกันจะขยับพร้อมกัน)' }[t];
+  feDraw();
+}
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => feTool(b.dataset.tool));
+function fePolyDone() { if (FE.draft.length >= 3) { feSnapshot(); F.panels.push({ id: F.nextId++, pts: FE.draft }); } FE.draft = []; feAll(); }
+$('fe-poly-done').onclick = fePolyDone;
+feWrap.addEventListener('pointerdown', ev => {
+  if (!F) return; const p = feNat(ev), k = feK(); feWrap.setPointerCapture(ev.pointerId);
+  if (FE.tool === 'rect') { const s = feSnap(p); FE.drag = { t: 'rect', a: s, b: s }; }
+  else if (FE.tool === 'poly') { const s = feSnap(p); if (FE.draft.length >= 3 && s[0] === FE.draft[0][0] && s[1] === FE.draft[0][1]) return fePolyDone(); FE.draft.push(s); }
+  else {
+    let hit = null, bd = 16 * k;
+    F.panels.forEach(pn => pn.pts.forEach(q => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; hit = q; } }));
+    if (hit) { feSnapshot(); const refs = []; F.panels.forEach((pn, pi) => pn.pts.forEach((q, vi) => { if (Math.hypot(q[0] - hit[0], q[1] - hit[1]) < 2.5) refs.push([pi, vi]); })); FE.drag = { t: 'v', refs }; }
+    else { const f = [...F.panels].reverse().find(pn => feInPoly(p, pn.pts)); F.sel = f ? f.id : null; }
+  }
+  feDraw();
+});
+feWrap.addEventListener('pointermove', ev => {
+  if (!FE.drag) return; const p = feNat(ev);
+  if (FE.drag.t === 'rect') FE.drag.b = feSnap(p);
+  else { const s = feSnap(p, new Set(FE.drag.refs.map(r => r[0])), FE.drag.refs, true); FE.drag.refs.forEach(([pi, vi]) => F.panels[pi].pts[vi] = s.slice()); }
+  feDraw();
+});
+const feUp = () => {
+  const d = FE.drag; FE.drag = null; if (!d) return;
+  if (d.t === 'rect') { const k = feK(), [a, b] = [d.a, d.b];
+    if (Math.abs(b[0] - a[0]) > 4 * k && Math.abs(b[1] - a[1]) > 4 * k) { feSnapshot(); F.panels.push({ id: F.nextId++, pts: [a, [b[0], a[1]], b, [a[0], b[1]]] }); } }
+  feAll();
+};
+feWrap.addEventListener('pointerup', feUp); feWrap.addEventListener('pointercancel', feUp);
+addEventListener('keydown', e => { if (e.key === 'Enter' && F && !$('fe').classList.contains('hidden') && FE.tool === 'poly') fePolyDone(); });
+$('fe-root').onclick = () => { if (!F.sel) { toast('แตะเลือกแผงด้วย ✋ ก่อน แล้วค่อยกดตั้งเป็นแผงฐาน'); return; } feSnapshot(); F.root = F.sel; feAll(); };
+$('fe-del').onclick = () => { if (!F.sel) return; feSnapshot(); F.panels = F.panels.filter(p => p.id !== F.sel); if (F.root === F.sel) F.root = null; F.sel = null; feAll(); };
+$('fe-undo').onclick = () => { const u = FE.undo.pop(); if (!u) return; Object.assign(F, JSON.parse(u)); F.sel = null; feAll(); };
+$('fe-clear').onclick = () => { feSnapshot(); F.panels = []; F.root = null; F.cfg = {}; F.sel = null; feAll(); };
+$('fe-mm').oninput = e => F.mm = +e.target.value;
+const feClose = () => { $('fe').classList.add('hidden'); $('fe').classList.remove('flex'); };
+$('fe-x').onclick = feClose;
+$('btn-free').onclick = () => {
+  if (!customImg) { toast('อัปโหลดภาพ Dieline ก่อน (ปุ่มด้านบน) แล้วค่อยตั้งแบบอิสระ'); return; }
+  if (!F) F = { panels: [], root: null, cfg: {}, mm: 0, nextId: 1, sel: null };
+  FE.iw = customImg.naturalWidth; FE.ih = customImg.naturalHeight; FE.undo = [];
+  feSvg.setAttribute('viewBox', `0 0 ${FE.iw} ${FE.ih}`);
+  const img = $('fe-img'); img.onload = feAll; img.src = customImg.src;
+  $('fe-mm').value = F.mm || curDims[0] || 200;
+  $('fe').classList.remove('hidden'); $('fe').classList.add('flex'); feTool('rect'); feList();
+};
+$('fe-apply').onclick = () => {
+  if (F.panels.length < 2) { toast('วาดอย่างน้อย 2 แผงก่อน'); return; }
+  if (!F.root) { const ar = p => Math.abs(p.pts.reduce((a, q, i) => { const n = p.pts[(i + 1) % p.pts.length]; return a + q[0] * n[1] - n[0] * q[1]; }, 0)); F.root = F.panels.reduce((a, b) => ar(b) > ar(a) ? b : a).id; }
+  F.mm = +$('fe-mm').value || 200; feClose(); boxType = 'free'; syncTypeBtns(); refresh(); setFold(100, false);
+  toast('สร้างกล่องตามแผงที่วาดแล้ว — เลื่อนแถบพับดู ถ้าพับผิดทิศให้กด “กลับด้านพับ” ที่รอยพับนั้น');
+};
+function buildFreeBox() {
+  while (boxRoot.children.length) boxRoot.remove(boxRoot.children[0]);
+  panels = []; const T = feTree(); if (!T) return;
+  const iw = customImg.naturalWidth, ih = customImg.naturalHeight, byId = id => F.panels.find(p => p.id === id);
+  const rx = byId(F.root).pts.map(q => q[0]), sc = ((F.mm || 200) / Math.max(1, Math.max(...rx) - Math.min(...rx))) / 100;
+  const G = {}, joints = []; let P = 1;
+  T.nodes.forEach(n => {
+    const pn = byId(n.id), O = n.hinge ? n.hinge.A : [(Math.min(...rx) + Math.max(...rx)) / 2, byId(F.root).pts.reduce((a, q) => a + q[1], 0) / pn.pts.length];
+    const pts = pn.pts.map(q => new THREE.Vector2((q[0] - O[0]) * sc, -(q[1] - O[1]) * sc));
+    const order = pts.map((_, i) => i); if (THREE.ShapeUtils.isClockWise(pts)) order.reverse();
+    const tri = THREE.ShapeUtils.triangulateShape(order.map(i => pts[i]), []);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(order.flatMap(i => [pts[i].x, pts[i].y, 0]), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(order.flatMap(i => [pn.pts[i][0] / iw, 1 - pn.pts[i][1] / ih]), 2));
+    geo.setIndex(tri.flat()); geo.computeVertexNormals();
+    const outerMat = new THREE.MeshStandardMaterial({ map: currentTexture, roughness: 0.55, metalness: 0.05 });
+    const g = new THREE.Group(), outer = new THREE.Mesh(geo, outerMat); outer.castShadow = true;
+    g.add(outer, new THREE.Mesh(geo.clone(), innerMat)); g.userData.outerMat = outerMat; panels.push(g);
+    if (!n.parent) boxRoot.add(g);
+    else {
+      const par = G[n.parent], h = n.hinge, c = F.cfg[h.key] || {};
+      g.position.set((O[0] - par.O[0]) * sc, -(O[1] - par.O[1]) * sc, 0); par.g.add(g);
+      const d = new THREE.Vector3(h.B[0] - h.A[0], -(h.B[1] - h.A[1]), 0).normalize();
+      const cx = pn.pts.reduce((a, q) => a + q[0], 0) / pn.pts.length - O[0], cy = -(pn.pts.reduce((a, q) => a + q[1], 0) / pn.pts.length - O[1]);
+      const side = Math.sign(d.x * cy - d.y * cx) || 1, ph = c.phase || n.depth; P = Math.max(P, ph);
+      const pr = new THREE.Vector3(-d.y, d.x, 0); if (pr.x * (par.c.x - g.position.x) + pr.y * (par.c.y - g.position.y) < 0) pr.negate(); // ทิศเข้าหาด้านในของแผงแม่
+      joints.push({ g, axis: d, ang: -side * (c.flip ? -1 : 1) * (c.angle ?? 90) * Math.PI / 180, ph, depth: n.depth, base: g.position.clone(), perp: pr });
+    }
+    G[n.id] = { g, O, c: pts.reduce((a, q) => a.add(q), new THREE.Vector2()).divideScalar(pts.length) };
+  });
+  J = { free: joints, P }; updateFold(+$('fold').value);
+}
+function updateFree(t) {
+  J.free.forEach(j => { // เหลื่อมแผงที่พับซ้อนกันเล็กน้อย (~0.4 มม./ชั้น) เพื่อกันภาพกะพริบ
+    const p = clamp(t * J.P - (j.ph - 1), 0, 1);
+    j.g.quaternion.setFromAxisAngle(j.axis, j.ang * p);
+    j.g.position.copy(j.base).addScaledVector(j.perp, 0.004 * (j.depth + 0.1 * (J.P - j.ph)) * p);
+  });
+  boxRoot.position.set(0, 0, 0); boxRoot.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(boxRoot), c = bb.getCenter(new THREE.Vector3()), z = bb.getSize(new THREE.Vector3());
+  boxRoot.position.copy(c).multiplyScalar(-1); floor.position.y = grid.position.y = -z.y / 2 - 0.02;
+}
+
+// ---------- ตรวจบาร์โค้ดอัตโนมัติ ----------
+let bcBusy = false;
+const BC_NAME = { ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E', code_128: 'Code 128', code_39: 'Code 39', itf: 'ITF', codabar: 'Codabar', qr_code: 'QR Code', data_matrix: 'Data Matrix' };
+const BC_MODULES = { ean_13: 95, upc_a: 95, ean_8: 67 };
+function gs1(d) { const n = d.split('').map(Number), c = n.pop(); let sum = 0; n.reverse().forEach((v, i) => sum += v * (i % 2 === 0 ? 3 : 1)); const exp = (10 - sum % 10) % 10; return { ok: exp === c, exp }; }
+function zxDecode(cv) {
+  if (typeof ZXing === 'undefined') return null;
+  try {
+    const BF = ZXing.BarcodeFormat, hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [BF.EAN_13, BF.EAN_8, BF.UPC_A, BF.UPC_E, BF.CODE_128, BF.CODE_39, BF.ITF, BF.CODABAR, BF.QR_CODE, BF.DATA_MATRIX]);
+    const rd = new ZXing.MultiFormatReader(); rd.setHints(hints);
+    const r = rd.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(cv))));
+    const pts = r.getResultPoints() || [], xs = pts.map(q => q.getX()), ys = pts.map(q => q.getY());
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    return { fmt: String(BF[r.getBarcodeFormat()]).toLowerCase(), text: r.getText(), box: pts.length ? [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)] : [0, 0, cv.width, cv.height] };
+  } catch (e) { return null; }
+}
+async function scanCanvas(src, prog) {
+  let det = null;
+  if ('BarcodeDetector' in window) {
+    try { const sup = await BarcodeDetector.getSupportedFormats(), w = Object.keys(BC_NAME).concat(['code_93', 'pdf417', 'aztec']).filter(f => sup.includes(f)); if (w.length) det = new BarcodeDetector({ formats: w }); } catch (e) {}
+  }
+  if (!det && typeof ZXing === 'undefined') return { error: 'เบราว์เซอร์นี้ไม่รองรับการตรวจบาร์โค้ด — ลองเปิดด้วย Chrome หรือ Safari รุ่นใหม่' };
+  const W = src.width, H = src.height, found = new Map(), tiles = [[0, 0, W, H]], g = 4;
+  for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) {
+    const x0 = Math.max(0, (c - 0.2) * W / g), x1 = Math.min(W, (c + 1.2) * W / g), y0 = Math.max(0, (r - 0.2) * H / g), y1 = Math.min(H, (r + 1.2) * H / g);
+    tiles.push([x0, y0, x1 - x0, y1 - y0]);
+  }
+  for (let i = 0; i < tiles.length; i++) {
+    const [x, y, w, h] = tiles[i]; prog(i + 1, tiles.length);
+    const cv = document.createElement('canvas'), sx = Math.min(4096, w * Math.max(1, Math.min(3, 1400 / w))) / w;
+    cv.width = Math.round(w * sx); cv.height = Math.round(h * sx); cv.getContext('2d').drawImage(src, x, y, w, h, 0, 0, cv.width, cv.height);
+    let hits = [];
+    if (det) { try { hits = (await det.detect(cv)).map(b => ({ fmt: b.format, text: b.rawValue, box: [b.boundingBox.x, b.boundingBox.y, b.boundingBox.width, b.boundingBox.height] })); } catch (e) {} }
+    if (!hits.length) { const z = zxDecode(cv); if (z) hits = [z]; }
+    hits.forEach(hh => {
+      const box = [x + hh.box[0] / sx, y + hh.box[1] / sx, hh.box[2] / sx, hh.box[3] / sx], key = hh.fmt + '|' + hh.text, old = found.get(key);
+      if (!old || box[2] * box[3] > old.box[2] * old.box[3]) found.set(key, { fmt: hh.fmt, text: hh.text, box });
+    });
+    await new Promise(r => setTimeout(r));
+  }
+  return { list: [...found.values()] };
+}
+function bcThumb(src, b) {
+  const pw = b[2] * 0.12 + 6, ph = Math.max(b[3], b[2] * 0.35) * 0.2 + 6, x = Math.max(0, b[0] - pw), y = Math.max(0, b[1] - ph);
+  const w = Math.min(src.width - x, b[2] + 2 * pw), h = Math.min(src.height - y, b[3] + 2 * ph), cv = document.createElement('canvas');
+  cv.width = 220; cv.height = Math.max(20, Math.round(220 * h / w)); cv.getContext('2d').drawImage(src, x, y, w, h, 0, 0, cv.width, cv.height);
+  return cv.toDataURL('image/png');
+}
+async function runBarcode(mode) {
+  if (bcBusy) return;
+  let src;
+  if (mode === 'view') {
+    renderer.render(scene, camera); src = document.createElement('canvas'); src.width = renderer.domElement.width; src.height = renderer.domElement.height;
+    const x = src.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, src.width, src.height); x.drawImage(renderer.domElement, 0, 0);
+  } else if (customActive && customCanvas) src = customCanvas;
+  else { toast('ลายตัวอย่างใช้บาร์โค้ดจำลอง — อัปโหลดภาพ Dieline จริงก่อนจึงจะตรวจได้'); return; }
+  bcBusy = true; const body = $('bc-body'); $('bc').classList.remove('hidden');
+  body.innerHTML = '<p id="bc-prog">กำลังตรวจบาร์โค้ด…</p>';
+  const res = await scanCanvas(src, (a, b) => { const e = $('bc-prog'); if (e) e.textContent = `กำลังตรวจบาร์โค้ด… ${a}/${b}`; });
+  bcBusy = false;
+  if (res.error) { body.innerHTML = `<p style="color:#fbbf24">${res.error}</p>`; $('btn-bc').textContent = '🔍 ตรวจบาร์โค้ด'; return; }
+  let ok = 0, bad = 0, rows = '';
+  res.list.forEach(it => {
+    let st = ['#34d399', '✓ อ่านได้'], note = '';
+    if (['ean_13', 'ean_8', 'upc_a', 'itf'].includes(it.fmt) && /^\d+$/.test(it.text) && [8, 12, 13, 14].includes(it.text.length)) {
+      const c = gs1(it.text); st = c.ok ? ['#34d399', '✓ ผ่าน — เลขตรวจสอบถูกต้อง'] : ['#f87171', `✗ ไม่ผ่าน — เลขตรวจสอบผิด (ควรลงท้ายด้วย ${c.exp})`];
+    }
+    if (it.fmt === 'ean_13' && it.text.startsWith('885')) note += ' • รหัสประเทศ GS1: ไทย (885)';
+    st[0] === '#f87171' ? bad++ : ok++;
+    if (mode !== 'view' && BC_MODULES[it.fmt]) { const m = it.box[2] / BC_MODULES[it.fmt]; note += ` • แท่งบางสุด ≈ ${m.toFixed(1)} px` + (m < 1.5 ? ' ⚠️ ความละเอียดต่ำ อาจสแกนยากเมื่อพิมพ์จริง' : ''); }
+    rows += `<div class="flex gap-2 items-center rounded-lg p-2" style="background:#0b1220;border:1px solid #334155"><img src="${bcThumb(src, it.box)}" alt="" style="width:96px;background:#fff;border-radius:4px" />` +
+      `<div class="min-w-0"><div style="color:var(--muted)">${BC_NAME[it.fmt] || it.fmt}</div><div class="font-mono text-sm break-all">${it.text.replace(/</g, '&lt;')}</div><div style="color:${st[0]}">${st[1]}</div><div style="color:var(--muted)">${note}</div></div></div>`;
+  });
+  const head = !res.list.length
+    ? `<p style="color:#fbbf24">⚠️ ไม่พบบาร์โค้ดที่อ่านได้</p><ul class="list-disc pl-4" style="color:var(--muted)"><li>ภาพอาจมีความละเอียดต่ำหรือบาร์โค้ดเล็กเกินไป — ลองใช้ภาพต้นฉบับที่คมกว่านี้</li><li>แท่งควรเป็นสีเข้มบนพื้นสว่าง และไม่ถูกบีบหรือยืด</li><li>ตรวจจากมุมมอง 3D ควรหมุนให้บาร์โค้ดหันตรง ไม่เอียงมาก</li></ul>`
+    : `<p style="color:${bad ? '#f87171' : '#34d399'}">${bad ? `❗ พบ ${res.list.length} รายการ — ไม่ผ่าน ${bad} รายการ` : `✅ พบ ${res.list.length} รายการ — ผ่านทั้งหมด`}</p>`;
+  body.innerHTML = head + rows + '<p style="color:var(--muted)">เป็นการตรวจจากภาพบนหน้าจอเท่านั้น ไม่ใช่การรับรองเกรดบาร์โค้ด (เช่น ISO/GS1 verifier) ควรทดสอบกับงานพิมพ์จริงอีกครั้ง</p>';
+  $('btn-bc').textContent = !res.list.length ? '⚠️ ไม่พบบาร์โค้ด' : bad ? `❗ บาร์โค้ดไม่ผ่าน ${bad}` : `✅ บาร์โค้ดผ่าน ${ok}`;
+  toast(!res.list.length ? '⚠️ ไม่พบบาร์โค้ดที่อ่านได้ในภาพ' : bad ? `❗ บาร์โค้ดไม่ผ่าน ${bad} จาก ${res.list.length} รายการ` : `✅ บาร์โค้ดผ่านทั้งหมด ${res.list.length} รายการ`);
+}
+$('btn-bc').onclick = () => { if (bcBusy) return; if (customActive && customCanvas) runBarcode('image'); else { $('bc').classList.remove('hidden'); $('bc-body').innerHTML = '<p>ลายตัวอย่างใช้บาร์โค้ดจำลอง จึงไม่ตรวจอัตโนมัติ — อัปโหลดภาพ Dieline จริงเพื่อตรวจ หรือกด “ตรวจจากมุมมอง 3D” ด้านล่าง</p>'; } };
+$('bc-x').onclick = () => $('bc').classList.add('hidden');
+$('bc-rescan').onclick = () => runBarcode('image');
+$('bc-view').onclick = () => runBarcode('view');
+
+// ---------- เมนูบันทึกภาพ ----------
+const EX = { fmt: 'png', scope: 'scene', bg: 'studio', color: '#ffffff', trim: true, shadow: true, scale: 2, page: 'fit' };
+function exPass(o) { // เรนเดอร์ฉากแบบพื้นหลังโปร่งใส แล้วคืนเป็น canvas
+  const W0 = innerWidth, H0 = innerHeight, cap = Math.min(o.max, renderer.capabilities.maxTextureSize || 4096);
+  const sc = Math.max(0.1, Math.min(o.scale, cap / Math.max(W0, H0)));
+  const prev = { bg: scene.background, grid: grid.visible, floor: floor.visible, pr: renderer.getPixelRatio() };
+  const w = Math.round(W0 * sc), h = Math.round(H0 * sc);
+  renderer.setPixelRatio(1); renderer.setSize(w, h, false);
+  scene.background = null; grid.visible = o.grid && prev.grid; floor.visible = o.shadow;
+  renderer.render(scene, camera);
+  const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(renderer.domElement, 0, 0);
+  scene.background = prev.bg; grid.visible = prev.grid; floor.visible = prev.floor;
+  renderer.setPixelRatio(prev.pr); renderer.setSize(innerWidth, innerHeight); renderer.render(scene, camera);
+  return c;
+}
+function alphaBBox(c) {
+  const k = Math.min(1, 600 / Math.max(c.width, c.height)), sm = document.createElement('canvas');
+  sm.width = Math.max(1, Math.round(c.width * k)); sm.height = Math.max(1, Math.round(c.height * k));
+  const sx = sm.getContext('2d', { willReadFrequently: true }); sx.drawImage(c, 0, 0, sm.width, sm.height);
+  const d = sx.getImageData(0, 0, sm.width, sm.height).data; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+  for (let y = 0; y < sm.height; y++) for (let x = 0; x < sm.width; x++) if (d[(y * sm.width + x) * 4 + 3] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) return [0, 0, c.width, c.height];
+  const m = 0.04 * Math.max(x1 - x0, y1 - y0) + 2;
+  const X0 = Math.max(0, (x0 - m) / k), Y0 = Math.max(0, (y0 - m) / k), X1 = Math.min(c.width, (x1 + 1 + m) / k), Y1 = Math.min(c.height, (y1 + 1 + m) / k);
+  return [Math.floor(X0), Math.floor(Y0), Math.ceil(X1 - X0), Math.ceil(Y1 - Y0)];
+}
+function exBuild(max) {
+  const boxOnly = EX.scope === 'box', src = exPass({ grid: !boxOnly, shadow: !boxOnly || EX.shadow, scale: EX.scale, max });
+  const r = boxOnly && EX.trim ? alphaBBox(src) : [0, 0, src.width, src.height];
+  const out = document.createElement('canvas'); out.width = r[2]; out.height = r[3]; const x = out.getContext('2d');
+  const fill = EX.bg === 'color' ? EX.color : EX.bg === 'studio' ? '#0f172a' : (EX.fmt === 'jpg' ? '#ffffff' : null);
+  if (fill) { x.fillStyle = fill; x.fillRect(0, 0, out.width, out.height); }
+  x.drawImage(src, r[0], r[1], r[2], r[3], 0, 0, r[2], r[3]);
+  return out;
+}
+function exSync() {
+  document.querySelectorAll('#ex [data-g]').forEach(g => g.querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', String(EX[g.dataset.g]) === b.dataset.v)));
+  const show = (id, on, cls = 'flex') => { $(id).classList.toggle('hidden', !on); $(id).classList.toggle(cls, on); };
+  show('ex-boxopts', EX.scope === 'box'); show('ex-pdfopts', EX.fmt === 'pdf', 'block'); show('ex-coloropt', EX.bg === 'color');
+  $('ex-trim').disabled = EX.scope !== 'box'; $('ex-shadow').checked = EX.shadow; $('ex-trim').checked = EX.trim;
+  $('ex-none').disabled = EX.fmt === 'jpg';
+  $('ex-note').textContent = EX.fmt === 'jpg' ? 'JPG ไม่รองรับพื้นหลังโปร่งใส — จะใช้พื้นสีขาวแทนเมื่อเลือกโปร่งใส' : (EX.bg === 'none' && EX.fmt === 'webp' ? '' : '');
+}
+let exT;
+function exPreview() {
+  clearTimeout(exT);
+  exT = setTimeout(() => {
+    const cv = exBuild(640), mx = Math.max(innerWidth, innerHeight), cap = Math.min(4096, renderer.capabilities.maxTextureSize || 4096);
+    const ratio = Math.min(EX.scale, cap / mx) / Math.min(EX.scale, 640 / mx);
+    $('ex-prev').src = cv.toDataURL('image/png');
+    $('ex-info').textContent = `ขนาดไฟล์ภาพ ≈ ${Math.round(cv.width * ratio)} × ${Math.round(cv.height * ratio)} พิกเซล`;
+  }, 120);
+}
+document.querySelectorAll('#ex [data-g]').forEach(g => g.addEventListener('click', e => {
+  const b = e.target.closest('[data-v]'); if (!b || b.disabled) return;
+  const k = g.dataset.g; EX[k] = k === 'scale' ? +b.dataset.v : b.dataset.v;
+  if (k === 'fmt' && EX.fmt === 'jpg' && EX.bg === 'none') EX.bg = 'color';
+  exSync(); exPreview();
+}));
+$('ex-trim').onchange = e => { EX.trim = e.target.checked; exPreview(); };
+$('ex-shadow').onchange = e => { EX.shadow = e.target.checked; exPreview(); };
+$('ex-color').oninput = e => { EX.color = e.target.value; exPreview(); };
+const exClose = () => { $('ex').classList.add('hidden'); $('ex').classList.remove('flex'); };
+$('btn-png').onclick = () => { $('ex').classList.remove('hidden'); $('ex').classList.add('flex'); exSync(); exPreview(); };
+$('ex-x').onclick = $('ex-cancel').onclick = exClose;
+$('ex').addEventListener('click', e => { if (e.target === $('ex')) exClose(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') exClose(); });
+$('ex-save').onclick = async () => {
+  const btn = $('ex-save'); btn.disabled = true; btn.textContent = 'กำลังสร้างไฟล์…';
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    const cv = exBuild(4096), base = (($('f-name').value || 'box').replace(/[^\w]+/g, '_') || 'box') + (EX.scope === 'box' ? '_box' : '_scene');
+    let blob, ext = EX.fmt, mime;
+    if (EX.fmt === 'pdf') {
+      const { jsPDF } = window.jspdf, w = cv.width, h = cv.height, opaque = !(EX.bg === 'none'), img = cv.toDataURL(opaque ? 'image/jpeg' : 'image/png', 0.92), type = opaque ? 'JPEG' : 'PNG';
+      let doc;
+      if (EX.page === 'a4') {
+        doc = new jsPDF({ orientation: w >= h ? 'l' : 'p', unit: 'mm', format: 'a4' });
+        const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight(), r = Math.min((pw - 20) / w, (ph - 20) / h);
+        doc.addImage(img, type, (pw - w * r) / 2, (ph - h * r) / 2, w * r, h * r);
+      } else { doc = new jsPDF({ orientation: w >= h ? 'l' : 'p', unit: 'px', format: [w, h], hotfixes: ['px_scaling'] }); doc.addImage(img, type, 0, 0, w, h); }
+      blob = doc.output('blob'); mime = 'application/pdf';
+    } else {
+      mime = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' }[EX.fmt];
+      blob = await new Promise(r => cv.toBlob(r, mime, 0.92));
+      if (!blob || (EX.fmt === 'webp' && blob.type !== 'image/webp')) throw new Error('เบราว์เซอร์นี้สร้างไฟล์ ' + EX.fmt.toUpperCase() + ' ไม่ได้');
+    }
+    if (await saveFile(base + '.' + ext, blob, mime)) { toast('บันทึกไฟล์ ' + ext.toUpperCase() + ' แล้ว'); exClose(); }
+  } catch (err) { toast('บันทึกไม่สำเร็จ: ' + (err.message || err)); }
+  btn.disabled = false; btn.textContent = '⬇️ บันทึก';
+};
+
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+toast('ลากเพื่อหมุน • บีบนิ้วเพื่อซูม • เลื่อนแถบเพื่อพับกล่อง');
+</script>
+</body>
+</html>
